@@ -27,9 +27,7 @@ class BatchTransfer:
             token_id=TOKEN_ID_TYPE,
             amount=sp.TNat
         )
-        tx_type = tx_type.layout(
-            ("to_", ("token_id", "amount"))
-        )
+        tx_type = tx_type.layout(("to_", ("token_id", "amount")))
         transfer_type = sp.TRecord(
             from_=sp.TAddress,
             txs=sp.TList(tx_type)
@@ -62,7 +60,10 @@ class BalanceOf:
         return sp.TList(
             sp.TRecord(
                 request=BalanceOf.request_type(),
-                balance=sp.TNat).layout(("request", "balance")))
+                balance=sp.TNat
+            )
+            .layout(("request", "balance"))
+        )
 
     def entry_point_type():
         return sp.TRecord(
@@ -99,9 +100,7 @@ class FA2Core(sp.Contract):
                     from_user = LedgerKey.make(transfer.from_, tx.token_id)
                     to_user = LedgerKey.make(tx.to_, tx.token_id)
 
-                    sender_has_token = self.data.ledger.get(
-                        from_user, sp.nat(0)
-                    ) >= tx.amount
+                    sender_has_token = self.data.ledger.get(from_user, sp.nat(0)) >= tx.amount
 
                     sp.verify(
                         sender_has_token,
@@ -113,13 +112,8 @@ class FA2Core(sp.Contract):
                         message=self.error_message.not_owner()
                     )
 
-                    self.data.ledger[from_user] = sp.as_nat(
-                        self.data.ledger[from_user] - tx.amount
-                    )
-                    self.data.ledger[to_user] = self.data.ledger.get(
-                        to_user,
-                        0
-                    ) + tx.amount
+                    self.data.ledger[from_user] = sp.as_nat(self.data.ledger[from_user] - tx.amount)
+                    self.data.ledger[to_user] = self.data.ledger.get(to_user, 0) + tx.amount
 
                     sp.if self.data.ledger.get(from_user, sp.nat(0)) == sp.nat(0):
                         del self.data.ledger[from_user]
@@ -139,10 +133,7 @@ class FA2Core(sp.Contract):
             responses.value.push(
                 sp.record(
                     request=request,
-                    balance=self.data.ledger.get(
-                        LedgerKey.make(request.owner, request.token_id),
-                        0
-                    )
+                    balance=self.data.ledger.get(LedgerKey.make(request.owner, request.token_id), 0)
                 )
             )
 
@@ -202,17 +193,26 @@ class FA2Mint(FA2Core):
     @sp.entry_point
     def mint(self):
         token_id = sp.compute(self.next_token_id())
+
         cost = sp.compute(self.price(token_id))
-        sp.verify(token_id <= TOKEN_MAX_SUPPLY,
-                  message=self.error_message.token_supply_finished())
+        sp.verify(
+            token_id <= TOKEN_MAX_SUPPLY,
+            message=self.error_message.token_supply_finished()
+        )
+
         key = LedgerKey.make(sp.sender, token_id)
         sp.verify(~self.data.ledger.contains(key))
         sp.verify(~self.data.token_metadata.contains(token_id))
-        sp.verify(sp.amount >= cost,
-                  message=self.error_message.insufficient_balance())
+
+        sp.verify(
+            sp.amount >= cost,
+            message=self.error_message.insufficient_balance()
+        )
+
         sp.send(self.data.administrator, cost)
         sp.if sp.amount > cost:
             sp.send(sp.sender, sp.amount - cost)
+
         self.data.all_tokens = token_id
         self.data.ledger[key] = sp.nat(1)
         self.data.token_metadata[token_id] = sp.pair(
@@ -236,9 +236,7 @@ class FA2Mint(FA2Core):
             self.is_administrator(sp.sender),
             message=self.error_message.not_owner()
         )
-        token_id = sp.compute(
-            self.data.all_tokens + sp.nat(1)
-        )
+        token_id = sp.compute(self.data.all_tokens + sp.nat(1))
         sp.verify(
             token_id <= TOKEN_MAX_SUPPLY,
             message=self.error_message.token_supply_finished()
