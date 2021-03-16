@@ -21,9 +21,8 @@ mint: check-key-alias
 		--burn-cap 3
 
 sandbox:
-	docker stop tez-sandbox || true
-	docker run --rm --name tez-sandbox -e flextesa_node_cors_origin=* --detach -p 8732:20000 tqtezos/flextesa:20210216 edobox start
-	sleep 5
+	docker-compose up -d
+	sleep 20
 	tezos-client config reset
 	tezos-client --endpoint http://localhost:8732 bootstrapped
 	tezos-client --endpoint http://localhost:8732 config update

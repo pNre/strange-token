@@ -1,6 +1,6 @@
 import smartpy as sp
 
-IPFS_HASH = "QmRun4e1AhpG8rWbz3L8Rv66zao5jS6SaYKDTxYSNPw68Z"
+IPFS_HASH = "QmUbqtsfzxh1963ivFk7mCFHq8Dg9G1CTdt3LyfEDTpGnN"
 TOKEN_ID_TYPE = sp.TNat
 TOKEN_MAX_SUPPLY = 128
 PRICE_CONST_C = 900
@@ -76,7 +76,7 @@ class FA2Core(sp.Contract):
     def __init__(self, metadata, **extra_storage):
         self.error_message = ErrorMessage()
         self.batch_transfer = BatchTransfer()
-        self.exception_optimization_level = "default-line"
+        self.exception_optimization_level = "default-unit"
         self.init(
             ledger=sp.big_map(
                 tkey=LedgerKey.get_type(),
@@ -101,7 +101,6 @@ class FA2Core(sp.Contract):
                     to_user = LedgerKey.make(tx.to_, tx.token_id)
 
                     sender_has_token = self.data.ledger.get(from_user, sp.nat(0)) >= tx.amount
-
                     sp.verify(
                         sender_has_token,
                         message=self.error_message.insufficient_balance()
@@ -188,32 +187,31 @@ class FA2Administrator(FA2Core):
 
 class FA2Mint(FA2Core):
     def next_token_id(self):
-        return self.data.all_tokens + sp.nat(1)
+        token_id = self.data.all_tokens
+        sp.verify(
+            token_id <= TOKEN_MAX_SUPPLY,
+            message=self.error_message.token_supply_finished()
+        )
+        return token_id
 
     @sp.entry_point
     def mint(self):
         token_id = sp.compute(self.next_token_id())
-
         cost = sp.compute(self.price(token_id))
         sp.verify(
-            token_id <= TOKEN_MAX_SUPPLY,
-            message=self.error_message.token_supply_finished()
+            sp.amount >= cost,
+            message=self.error_message.insufficient_balance()
         )
 
         key = LedgerKey.make(sp.sender, token_id)
         sp.verify(~self.data.ledger.contains(key))
         sp.verify(~self.data.token_metadata.contains(token_id))
 
-        sp.verify(
-            sp.amount >= cost,
-            message=self.error_message.insufficient_balance()
-        )
-
         sp.send(self.data.administrator, cost)
         sp.if sp.amount > cost:
             sp.send(sp.sender, sp.amount - cost)
 
-        self.data.all_tokens = token_id
+        self.data.all_tokens = token_id + sp.nat(1)
         self.data.ledger[key] = sp.nat(1)
         self.data.token_metadata[token_id] = sp.pair(
             token_id,
@@ -236,11 +234,7 @@ class FA2Mint(FA2Core):
             self.is_administrator(sp.sender),
             message=self.error_message.not_owner()
         )
-        token_id = sp.compute(self.data.all_tokens + sp.nat(1))
-        sp.verify(
-            token_id <= TOKEN_MAX_SUPPLY,
-            message=self.error_message.token_supply_finished()
-        )
+        token_id = sp.compute(self.next_token_id())
         key = LedgerKey.make(sp.sender, token_id)
         sp.verify(~self.data.ledger.contains(key))
         sp.verify(~self.data.token_metadata.contains(token_id))
@@ -253,7 +247,7 @@ class FA2Mint(FA2Core):
         return result
 
     def price(self, number):
-        price = self.pow(number, PRICE_CONST_K) * PRICE_CONST_C
+        price = self.pow(number + 1, PRICE_CONST_K) * PRICE_CONST_C
         return sp.split_tokens(sp.tez(1), price, PRICE_DECIMALS)
 
     @sp.offchain_view(pure=True)
@@ -279,7 +273,7 @@ class TokenMetadata(FA2Core):
                 )
         sp.result(metadata.value)
 
-    def make_metadata(seed):
+    def make_metadata(owner, seed):
         return sp.map(l={
             "decimals": sp.bytes_of_string("0"),
             "name": sp.bytes_of_string("Strange Token"),
@@ -404,7 +398,7 @@ def test():
 
     scenario.h2("Minting")
     scenario.h3("Mint operation")
-    scenario += tok.mint().run(sender=alice, amount=sp.tez(10))
+    scenario += tok.mint().run(sender=alice, amount=sp.mutez(900_000))
     scenario += tok.mint().run(sender=bob, amount=sp.tez(10))
     scenario += tok.mint().run(sender=alice, amount=sp.tez(0), valid=False)
 
@@ -412,17 +406,14 @@ def test():
     consumer = ViewConsumer(tok)
     scenario += consumer
     scenario += tok.balance_of(ViewConsumer.arguments_for_balance_of(consumer, [
-        sp.record(owner=alice.address, token_id=1),
+        sp.record(owner=alice.address, token_id=0),
         sp.record(owner=bob.address, token_id=0),
-        sp.record(owner=bob.address, token_id=2)
+        sp.record(owner=bob.address, token_id=1)
     ]))
 
-    scenario.verify(consumer.data.balances[LedgerKey.make(
-        owner=alice.address, token_id=1)] == 1)
-    scenario.verify(~consumer.data.balances.contains(LedgerKey.make(
-        owner=bob.address, token_id=1)))
-    scenario.verify(consumer.data.balances[LedgerKey.make(
-        owner=bob.address, token_id=2)] == 1)
+    scenario.verify(consumer.data.balances[LedgerKey.make(owner=alice.address, token_id=0)] == 1)
+    scenario.verify(consumer.data.balances[LedgerKey.make(owner=bob.address, token_id=0)] == 0)
+    scenario.verify(consumer.data.balances[LedgerKey.make(owner=bob.address, token_id=1)] == 1)
 
     scenario.h2("Skipping")
     scenario += tok.skip().run(sender=alice, amount=sp.tez(0), valid=False)
@@ -439,7 +430,7 @@ def test():
                     sp.record(
                         to_=alice.address,
                         amount=1,
-                        token_id=2
+                        token_id=1
                     )
                 ]
             )
@@ -455,7 +446,7 @@ def test():
                     sp.record(
                         to_=bob.address,
                         amount=2,
-                        token_id=2
+                        token_id=1
                     )
                 ]
             )
@@ -471,7 +462,7 @@ def test():
                     sp.record(
                         to_=alice.address,
                         amount=1,
-                        token_id=2
+                        token_id=1
                     )
                 ]
             )
@@ -487,7 +478,7 @@ def test():
                     sp.record(
                         to_=admin.address,
                         amount=1,
-                        token_id=2
+                        token_id=1
                     )
                 ]
             )
@@ -503,12 +494,12 @@ def test():
                     sp.record(
                         to_=bob.address,
                         amount=1,
-                        token_id=1
+                        token_id=0
                     ),
                     sp.record(
                         to_=bob.address,
                         amount=1,
-                        token_id=2
+                        token_id=1
                     )
                 ]
             )
